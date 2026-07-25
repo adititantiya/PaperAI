@@ -201,7 +201,8 @@ with st.sidebar:
     st.metric("AI Engine", "Gemini Flash")
     st.metric("Dataset", "5000 Samples")
     st.caption(f"Loaded {len(history)} historical records")
-    st.metric("Accuracy", "99.9%")
+    accuracy = joblib.load("models/accuracy.pkl")
+    st.metric("Model Accuracy",f"{accuracy*100:.2f}%")
     st.success("🟢 System Online")
     st.divider()
     st.info("""
@@ -222,14 +223,7 @@ with h_left:
     AI-powered prediction and recommendation system for paper manufacturing
     </p>
     """)
-with h_right:
-    st.html("""
-    <div style='display:flex;justify-content:flex-end;gap:10px;margin-top:10px'>
-        <span class='top-badge'><span class='dot-green'></span> Live</span>
-        <span class='top-badge'>☀️ Theme</span>
-        <span class='top-badge'>🚀 Deploy</span>
-    </div>
-    """)
+
 
 # ====================================================
 # TABS
@@ -462,6 +456,17 @@ with prediction_tab:
                 ]}))
         st.plotly_chart(fig, use_container_width=True)
         st.divider()
+        st.subheader("🔗 Process Influence Chain")
+        chain = pd.DataFrame({
+    "Process Step": [
+        "Stock Flow",
+        "Steam Pressure",
+        "Moisture Control",
+        "Basis Weight Stability",
+        "Quality Prediction",
+        "OFF SPEC Risk"]})
+        st.table(chain)
+        st.divider()
 
         st.subheader("🔮 Future Prediction")
         if probability > 0.8:
@@ -480,48 +485,32 @@ with prediction_tab:
             st.metric("Estimated Time", "2–3 min")
 
         st.divider()
-        st.subheader("🏭 Process Flow")
+        st.subheader("🏭 Digital Twin")
         st.graphviz_chart("""
 digraph G {
 
 rankdir=LR;
 
-node [
-shape=box,
-style=filled,
-fillcolor=lightblue
-];
+node [shape=box style=filled fillcolor=lightblue];
 
 Stock [label="Stock Flow"];
 Filler [label="Filler Flow"];
 Steam [label="Steam Pressure"];
+Machine [label="Paper Machine", shape=ellipse, fillcolor=lightyellow];
 Speed [label="Machine Speed"];
 Moisture [label="Moisture"];
-Ash [label="Ash"];
-
-Machine [
-label="Paper Machine",
-shape=ellipse,
-fillcolor=lightyellow
-];
-
-Basis [
-label="Basis Weight"
-];
-
-Prediction [
-label="Quality Prediction",
-fillcolor=lightgreen
-];
+Basis [label="Basis Weight"];
+Prediction [label="Quality Prediction", fillcolor=lightgreen];
 
 Stock -> Machine;
 Filler -> Machine;
 Steam -> Machine;
-Speed -> Machine;
-Moisture -> Machine;
-Ash -> Machine;
 
-Machine -> Basis;
+Machine -> Speed;
+Machine -> Moisture;
+
+Speed -> Basis;
+Moisture -> Basis;
 
 Basis -> Prediction;
 
@@ -530,8 +519,15 @@ Basis -> Prediction;
         st.caption("Digital representation of the paper manufacturing process.")
 
         recommendations = get_recommendations(
-            stock_flow, filler_flow, steam_pressure, machine_speed, moisture, ash, basis_weight
-        )
+    stock_flow,
+    filler_flow,
+    steam_pressure,
+    machine_speed,
+    moisture,
+    ash,
+    basis_weight,
+    target_basis_weight
+)
         st.subheader("🎯 Priority Recommendations")
 
         for rec in recommendations:
@@ -575,7 +571,7 @@ Basis -> Prediction;
                 st.caption(f"📚 Source: {source}")
 
         st.divider()
-        st.subheader("📚 Historical Best Setpoints")
+        st.subheader("📚 Historical Successful Operating Setpoints")
         good_runs = history[history["off_spec"] == 0]
         best_stock = good_runs["stock_flow"].mean()
         best_filler = good_runs["filler_flow"].mean()
@@ -607,14 +603,17 @@ Basis -> Prediction;
             "Basis Weight": basis_weight,
         }
 
-        if steam_pressure > 65:
-            recommended["Steam Pressure"] = 60
+        if steam_pressure > best_steam+2:
+            recommended["Steam Pressure"] = round(best_steam,1)
 
-        if machine_speed > 980:
-            recommended["Machine Speed"] = 930
+        if machine_speed > best_speed:
+            recommended["Machine Speed"] = round(best_speed,1)
 
-        if moisture > 6.5:
-            recommended["Moisture"] = 5
+        if moisture > best_moisture:
+           recommended["Moisture"] = round(best_moisture,2)
+        if stock_flow < best_stock:
+            recommended["Stock Flow"] = round(best_stock, 1)
+
 
         if deviation > 2.5:
             recommended["Basis Weight"] = target_basis_weight
@@ -764,13 +763,55 @@ Generated using rule-based analysis because Gemini AI is currently unavailable.
         st.subheader("🚨 Active Process Alerts")
         alerts = []
         if steam_pressure > 65:
-            alerts.append(("🔴 CRITICAL", "Steam Pressure exceeds safe operating limit"))
+            alerts.append((
+    "🔴 CRITICAL",
+    f"""Steam Pressure
+
+Current : {steam_pressure:.1f} bar
+
+Recommended : {best_steam:.1f} bar
+
+Expected Impact :
+Improves moisture stability and reduces OFF-SPEC risk."""
+))
         if machine_speed > 980:
-            alerts.append(("🟠 WARNING", "Machine Speed above recommended operating range"))
+            alerts.append((
+    "🟠 WARNING",
+    f"""Machine Speed
+
+Current : {machine_speed:.0f} m/min
+
+Recommended : {best_speed:.0f} m/min
+
+Expected Impact :
+Improves basis weight stability."""
+))
         if moisture > 6.5:
-            alerts.append(("🟡 WARNING", "Moisture content is higher than target"))
+            alerts.append((
+    "🟡 WARNING",
+    f"""Moisture
+
+Current : {moisture:.2f} %
+
+Recommended : {best_moisture:.2f} %
+
+Expected Impact :
+Improves drying consistency."""
+))
         if deviation > 2.5:
-            alerts.append(("🔴 CRITICAL", f"Basis Weight deviation is {deviation:.2f}%"))
+            alerts.append((
+    "🔴 CRITICAL",
+    f"""Basis Weight
+
+Current : {basis_weight:.2f} GSM
+
+Target : {target_basis_weight:.2f} GSM
+
+Deviation : {deviation:.2f} %
+
+Expected Impact :
+Returning to target improves product quality."""
+))
         if stock_flow < 90:
             alerts.append(("🟡 WARNING", "Stock Flow below recommended value"))
         if ash > 2.5:
@@ -932,6 +973,27 @@ OFF-SPEC Production
     fig4.update_layout(showlegend=False)
 
     st.plotly_chart(fig4, use_container_width=True)
+    st.divider()
+    st.subheader("📊 Steam Pressure vs Basis Weight")
+    fig5 = px.scatter(
+    history,
+    x="steam_pressure",
+    y="basis_weight",
+    color="off_spec",
+    title="Relationship between Steam Pressure and Basis Weight",
+    labels={
+        "steam_pressure": "Steam Pressure (bar)",
+        "basis_weight": "Basis Weight (GSM)",
+        "off_spec": "OFF SPEC"
+    })
+    st.plotly_chart(fig5, use_container_width=True)
+    st.divider()
+    st.subheader("🧠 Model Evaluation")
+    st.image(
+    "models/confusion_matrix.png",
+    caption="Random Forest Confusion Matrix",
+    use_container_width=True
+)
 
     st.divider()
     st.subheader("📈 Sample Historical Data")
