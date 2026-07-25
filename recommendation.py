@@ -31,27 +31,27 @@ def get_recommendations(
             f"Reduce Steam Pressure toward {best_steam:.1f} bar (Historical Successful Runs)"
         )
 
-    if machine_speed > best_speed:
+    if machine_speed > best_speed + 10:
         recommendations.append(
             f"Reduce Machine Speed toward {best_speed:.0f} m/min (Historical Successful Runs)"
         )
 
-    if moisture > best_moisture:
+    if moisture > best_moisture + 0.2:
         recommendations.append(
             f"Reduce Moisture toward {best_moisture:.2f}%"
         )
 
-    if stock_flow < best_stock:
+    if stock_flow < best_stock - 2:
         recommendations.append(
             f"Increase Stock Flow toward {best_stock:.1f} L/min"
         )
 
-    if basis_weight > target_basis_weight:
+    if abs(basis_weight - target_basis_weight) > 1:
         recommendations.append(
             f"Adjust Basis Weight toward the target value ({target_basis_weight:.2f} GSM)"
         )
 
-    if ash > best_ash:
+    if ash > best_ash + 0.2:
         recommendations.append(
             f"Reduce Ash Content toward {best_ash:.2f}%"
         )
