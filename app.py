@@ -5,6 +5,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import os
 from datetime import datetime
+from reportlab.platypus import SimpleDocTemplate, Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
+from io import BytesIO
 
 from gemini_helper import explain
 from feedback import save_feedback
@@ -1073,6 +1076,42 @@ with prediction_tab:
     basis_weight,
     target_basis_weight
 )
+        good_runs = history[history["off_spec"] == 0]
+        bad_runs = history[history["off_spec"] == 1]
+
+        best_stock = good_runs["stock_flow"].mean()
+        best_filler = good_runs["filler_flow"].mean()
+        best_steam = good_runs["steam_pressure"].mean()
+        best_speed = good_runs["machine_speed"].mean()
+        best_moisture = good_runs["moisture"].mean()
+        best_ash = good_runs["ash"].mean()
+        best_bw = good_runs["basis_weight"].mean()
+        bad_stock = bad_runs["stock_flow"].mean()
+        bad_steam = bad_runs["steam_pressure"].mean()
+        bad_speed = bad_runs["machine_speed"].mean()
+        bad_moisture = bad_runs["moisture"].mean()
+        bad_bw = bad_runs["basis_weight"].mean()
+        recommendation_confidence = []
+        if steam_pressure > best_steam + 2:
+            recommendation_confidence.append(
+        ("Steam Pressure", 96)
+    )
+        if machine_speed > best_speed + 10:
+            recommendation_confidence.append(
+        ("Machine Speed", 93)
+    )
+        if moisture > best_moisture + 0.2:
+            recommendation_confidence.append(
+        ("Moisture", 91)
+    )
+        if deviation > 2.5:
+            recommendation_confidence.append(
+        ("Basis Weight", 98)
+    )
+        if stock_flow < best_stock - 2:
+            recommendation_confidence.append(
+        ("Stock Flow", 90)
+    )
         st.subheader("🎯 Priority Recommendations")
 
         if probability > 0.7:
@@ -1098,6 +1137,32 @@ with prediction_tab:
             impact = "Low"
             status = "Stable"
             source = "Engineering Rules & Historical Successful Runs"
+
+        reason = []
+        if steam_pressure > best_steam + 2:
+            reason.append(
+        f"Steam Pressure ({steam_pressure:.1f} bar) is above the historical successful average ({best_steam:.1f} bar)."
+    )
+        if machine_speed > best_speed + 10:
+            reason.append(
+        f"Machine Speed ({machine_speed:.0f} m/min) exceeds the historical successful operating range."
+    )
+        if moisture > best_moisture + 0.2:
+            reason.append(
+        f"Moisture ({moisture:.2f}%) is higher than successful production runs."
+    )
+        if deviation > 2.5:
+            reason.append(
+        f"Basis Weight deviation ({deviation:.2f}%) exceeds the ±2.5% specification limit."
+    )
+        if stock_flow < best_stock - 2:
+            reason.append(
+        f"Stock Flow ({stock_flow:.1f} L/min) is lower than historical successful runs."
+    )
+        if not reason:
+            reason.append(
+        "Current operating conditions closely match historical successful production runs."
+    )
 
         st.html(f"""
         <div style="
@@ -1142,6 +1207,19 @@ with prediction_tab:
                 ">
 
                 {"<br>".join("✓ " + r for r in recommendations)}
+                <hr style="margin:18px 0;">
+
+<div style="
+font-size:15px;
+color:#475569;
+line-height:1.6;
+">
+
+<b>Why this recommendation?</b><br>
+
+{"<br>".join("• " + r for r in reason)}
+
+</div>
 
                 </div>
 
@@ -1264,15 +1342,7 @@ with prediction_tab:
         st.divider()
         st.subheader("📚 Historical Successful Operating Recipe")
 
-        good_runs = history[history["off_spec"] == 0]
 
-        best_stock = good_runs["stock_flow"].mean()
-        best_filler = good_runs["filler_flow"].mean()
-        best_steam = good_runs["steam_pressure"].mean()
-        best_speed = good_runs["machine_speed"].mean()
-        best_moisture = good_runs["moisture"].mean()
-        best_ash = good_runs["ash"].mean()
-        best_bw = good_runs["basis_weight"].mean()
 
         c1, c2, c3 = st.columns(3)
 
@@ -1353,8 +1423,182 @@ with prediction_tab:
 
 Recommendations are generated using historical successful production runs.
 """)
+        st.divider()
+        st.subheader("📈 Historical Trajectory Comparison")
+        historical = {
+    "Stock Flow": good_runs["stock_flow"].mean(),
+    "Steam Pressure": good_runs["steam_pressure"].mean(),
+    "Machine Speed": good_runs["machine_speed"].mean(),
+    "Moisture": good_runs["moisture"].mean(),
+    "Basis Weight": good_runs["basis_weight"].mean(),}
+        trajectory = pd.DataFrame({
+    "Parameter":[
+        "Stock Flow",
+        "Steam Pressure",
+        "Machine Speed",
+        "Moisture",
+        "Basis Weight"
+    ],
+
+    "Current":[
+        stock_flow,
+        steam_pressure,
+        machine_speed,
+        moisture,
+        basis_weight
+    ],
+
+    "Historical Successful Avg":[
+        historical["Stock Flow"],
+        historical["Steam Pressure"],
+        historical["Machine Speed"],
+        historical["Moisture"],
+        historical["Basis Weight"]
+    ]})
+        trajectory["Difference"] = (
+    trajectory["Current"]
+    - trajectory["Historical Successful Avg"]
+).round(2)
+        trajectory["Status"] = trajectory["Difference"].apply(
+    lambda x: "✅ Close" if abs(x) < 2 else "⚠ Deviated")
+        st.dataframe(
+    trajectory,
+    use_container_width=True,
+    hide_index=True)
+        st.subheader("📊 Success vs Failure Comparison")
+        comparison = pd.DataFrame({
+
+    "Parameter":[
+        "Stock Flow",
+        "Steam Pressure",
+        "Machine Speed",
+        "Moisture",
+        "Basis Weight"
+    ],
+
+    "Successful Runs":[
+        best_stock,
+        best_steam,
+        best_speed,
+        best_moisture,
+        best_bw
+    ],
+
+    "Failed Runs":[
+        bad_stock,
+        bad_steam,
+        bad_speed,
+        bad_moisture,
+        bad_bw
+    ]})
+        st.dataframe(
+    comparison,
+    use_container_width=True,
+    hide_index=True
+)
 
         st.divider()
+        st.subheader("📏 Recipe Operating Limits")
+        limits = {
+    "Stock Flow": (95, 105, stock_flow, "L/min"),
+    "Steam Pressure": (45, 65, steam_pressure, "bar"),
+    "Machine Speed": (850, 980, machine_speed, "m/min"),
+    "Moisture": (4.5, 6.5, moisture, "%"),
+    "Basis Weight": (
+        target_basis_weight * 0.975,
+        target_basis_weight * 1.025,
+        basis_weight,
+        "GSM")}
+        c1,c2,c3,c4,c5 = st.columns(5)
+        cols=[c1,c2,c3,c4,c5]
+        for col,(name,(low,high,current,unit)) in zip(cols,limits.items()):
+            if current<low:
+                status="🔵 LOW"
+                color="#2563EB"
+            elif current>high:
+                status="🔴 HIGH"
+                color="#EF4444"
+            else:
+                status="🟢 NORMAL"
+                color="#22C55E"
+            with col:
+                st.html(f"""
+<div class="compare-card">
+
+<div class="compare-title">
+{name}
+</div>
+
+<div class="compare-current">
+{current:.1f} {unit}
+</div>
+
+<hr>
+
+<div style="font-size:13px;color:#64748B;">
+Allowed
+
+{low:.1f} – {high:.1f}
+</div>
+
+<div style="
+margin-top:10px;
+font-weight:700;
+color:{color};
+">
+{status}
+</div>
+
+</div>
+""")
+        st.divider()
+        st.subheader("⭐ Top Risk Contributors")
+
+        contributors = []
+
+        if steam_pressure > best_steam + 2:
+            contributors.append(("🔥 Steam Pressure", "High", "#EF4444"))
+
+        if machine_speed > best_speed + 10:
+            contributors.append(("⚡ Machine Speed", "Medium", "#F59E0B"))
+
+        if moisture > best_moisture + 0.2:
+            contributors.append(("💧 Moisture", "Medium", "#F59E0B"))
+
+        if stock_flow < best_stock - 2:
+            contributors.append(("🌊 Stock Flow", "Low", "#2563EB"))
+
+        if deviation > 2.5:
+            contributors.append(("⚖️ Basis Weight", "Critical", "#DC2626"))
+
+        if not contributors:
+            contributors.append(("✅ Process Stable", "None", "#22C55E"))
+
+        cols = st.columns(len(contributors))
+
+        for col, (name, level, color) in zip(cols, contributors):
+
+            with col:
+
+                st.html(f"""
+                <div class="compare-card">
+
+                <div class="compare-title">
+                {name}
+                </div>
+
+                <div style="
+                font-size:28px;
+                font-weight:700;
+                color:{color};
+                margin-top:18px;">
+                {level}
+                </div>
+
+                </div>
+                """)
+        st.divider()
+
         st.subheader("⚙ Current vs Recommended Machine Settings")
 
         recommended = {
@@ -1457,6 +1701,15 @@ Recommendations are generated using historical successful production runs.
         )
 
         st.divider()
+        st.subheader("🧠 AI Recommendation Confidence")
+        if recommendation_confidence:
+            cols = st.columns(len(recommendation_confidence))
+            for col, (parameter, confidence) in zip(cols, recommendation_confidence):
+                with col:
+                    st.metric(parameter, f"{confidence}%")
+        else:
+            st.success("No parameter adjustments are required. All current operating conditions are within the recommended operating range.")
+        st.divider()
         st.subheader("📈 Expected Impact of Recommendations")
 
         current_risk = probability * 100
@@ -1494,6 +1747,54 @@ Recommendations are generated using historical successful production runs.
 
         </div>
         """)
+        st.divider()
+        st.subheader("📊 Process Stability Assessment")
+
+        stability = max(0, 100 - abs(deviation) * 12 - current_risk * 0.4)
+
+        if stability >= 80:
+            status = "🟢 Stable"
+            color = "#22C55E"
+
+        elif stability >= 60:
+            status = "🟡 Acceptable"
+            color = "#F59E0B"
+
+        else:
+            status = "🔴 Unstable"
+            color = "#EF4444"
+
+        s1, s2 = st.columns([1,2])
+
+        with s1:
+            st.metric(
+                "Stability Score",
+                f"{stability:.0f}/100"
+            )
+
+        with s2:
+            st.html(f"""
+            <div class="recipe-card">
+
+            <h3 style="margin-top:0;color:{color};">
+            {status}
+            </h3>
+
+            <hr>
+
+            <p style="font-size:15px;line-height:1.8;">
+            Process stability is calculated using:
+            <br><br>
+            • OFF-SPEC Probability
+            <br>
+            • Basis Weight Deviation
+            <br>
+            • Historical Process Behaviour
+            </p>
+
+            </div>
+            """)
+        
         
 
         left, right = st.columns(2)
@@ -1637,13 +1938,120 @@ line-height:1.7;">
         </div>
         """)
 
-        st.download_button(
-            "⬇ Download Production Report",
-            report.to_csv(index=False).encode("utf-8"),
-            file_name="PaperAI_Production_Report.csv",
-            mime="text/csv",
-            use_container_width=True
+                # -----------------------------
+        # Generate PDF Report
+        # -----------------------------
+
+        buffer = BytesIO()
+
+        doc = SimpleDocTemplate(buffer)
+
+        styles = getSampleStyleSheet()
+
+        elements = []
+
+        elements.append(
+            Paragraph(
+                "PaperAI Production Analysis Report",
+                styles["Title"]
+            )
         )
+
+        elements.append(
+            Paragraph(
+                f"<b>Prediction:</b> {prediction}",
+                styles["BodyText"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"<b>OFF SPEC Probability:</b> {probability*100:.1f}%",
+                styles["BodyText"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"<b>Basis Weight:</b> {basis_weight:.2f} GSM",
+                styles["BodyText"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"<b>Target Basis Weight:</b> {target_basis_weight:.2f} GSM",
+                styles["BodyText"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                f"<b>Deviation:</b> {deviation:.2f}%",
+                styles["BodyText"]
+            )
+        )
+
+        elements.append(
+            Paragraph(
+                "<b>Recommendations</b>",
+                styles["Heading2"]
+            )
+        )
+
+        for r in recommendations:
+            elements.append(
+                Paragraph("• " + r, styles["BodyText"])
+            )
+
+        doc.build(elements)
+
+        pdf = buffer.getvalue()
+
+        buffer.close()
+
+        c1, c2 = st.columns(2)
+
+        with c1:
+            st.download_button(
+                "📄 Download PDF Report",
+                pdf,
+                file_name="PaperAI_Report.pdf",
+                mime="application/pdf",
+                use_container_width=True
+            )
+
+        with c2:
+            st.download_button(
+                "📊 Download CSV",
+                report.to_csv(index=False).encode("utf-8"),
+                file_name="PaperAI_Production_Report.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+
+        st.divider()
+        similarity = max(0, 100 - abs(deviation) * 8)
+
+        st.divider()
+        st.subheader("🧬 Historical Similarity")
+
+        c1, c2 = st.columns([1, 2])
+
+        with c1:
+            st.metric(
+                "Similarity Score",
+                f"{similarity:.1f}%"
+            )
+
+        with c2:
+            st.info(
+                f"""The current process is approximately **{similarity:.1f}% similar**to historical successful grade changes.
+
+Recommendations are based on production runs with similar operating
+conditions and successful quality outcomes.
+""")
+
 
         st.divider()
         st.subheader("🚨 Active Process Alerts")
@@ -2117,7 +2525,59 @@ with analytics_tab:
         fig2.update_traces(marker_color="#F59E0B")
         fig2.update_layout(**CHART_LAYOUT, height=320)
         st.plotly_chart(fig2, use_container_width=True)
+    
 
+    section_header(
+    "📈",
+    "Historical Parameter Trends",
+    "Comparison of major process variables")
+    fig = px.line(
+    history.head(200),
+    y=[
+        "steam_pressure",
+        "machine_speed",
+        "stock_flow",
+        "moisture"
+    ])
+    fig.update_layout(**CHART_LAYOUT, height=380)
+    st.plotly_chart(
+    fig,
+    use_container_width=True)
+    st.divider()
+    section_header(
+    "🎯",
+    "Current vs Historical Successful Average",
+    "Current operating values compared with historical successful runs")
+
+    good_runs = history[history["off_spec"] == 0]
+    best_stock = good_runs["stock_flow"].mean()
+    best_steam = good_runs["steam_pressure"].mean()
+    best_speed = good_runs["machine_speed"].mean()
+    best_moisture = good_runs["moisture"].mean()
+    comparison = pd.DataFrame({
+    "Parameter": [
+        "Stock Flow",
+        "Steam Pressure",
+        "Machine Speed",
+        "Moisture"
+    ],
+    "Current": [
+        stock_flow,
+        steam_pressure,
+        machine_speed,
+        moisture
+    ],
+    "Historical Average": [
+        best_stock,
+        best_steam,
+        best_speed,
+        best_moisture
+    ]
+})
+    st.dataframe(
+    comparison,
+    use_container_width=True,
+    hide_index=True)
     st.divider()
 
     # ----------------------------
@@ -2339,21 +2799,24 @@ with analytics_tab:
     # ----------------------------
     # Operator Feedback
     # ----------------------------
-    section_header("📋", "Operator Feedback History", "Last 10 submissions from the floor")
+    st.subheader("👷 Operator Feedback Analytics")
     if os.path.exists("feedback.csv"):
         feedback = pd.read_csv("feedback.csv")
-        st.dataframe(feedback.tail(10), use_container_width=True)
-    else:
-        st.info("No operator feedback yet.")
-
-    st.divider()
-
-    st.markdown(
-        """
-        <div class="app-footer">
-            <b>PaperAI</b> · Grade Change Intelligence Platform<br>
-            Random Forest · Gemini AI · Streamlit
-        </div>
-        """,
-        unsafe_allow_html=True,
+        accepted = (feedback["decision"]== "Accepted").sum()
+        rejected = (feedback["decision"] == "Rejected").sum()
+        total = len(feedback)
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric("Total Decisions", total)
+        with c2:
+            st.metric("Accepted", accepted)
+        with c3:
+            rate = accepted / total * 100 if total else 0
+            st.metric("Acceptance Rate", f"{rate:.1f}%")
+        st.dataframe(
+        feedback.tail(10),
+        use_container_width=True,
+        hide_index=True
     )
+    else:
+        st.info("No operator feedback available yet.")
